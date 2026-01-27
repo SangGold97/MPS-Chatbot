@@ -147,7 +147,7 @@ def route_decision(state: AgentState) -> list[str]:
 | **LLM Framework** | LangGraph | 0.2.x | Workflow orchestration |
 | **LLM Serving** | vLLM | 0.6.x | High-performance inference |
 | **Embedding Model** | Qwen3-Embedding-0.6B | - | Text embedding cho RAG |
-| **Reasoning Model** | Qwen3-VL-4B-Thinking | - | Multi-modal reasoning |
+| **Reasoning Model** | Qwen3-VL-4B-Thinking-FP8 | - | Multi-modal reasoning |
 | **Vector DB** | ChromaDB | 0.5.x | Offline vector storage |
 | **Database** | PostgreSQL | 16.x | Conversation history |
 | **Backend** | FastAPI | 0.115.x | REST API + SSE streaming |
@@ -197,9 +197,9 @@ loguru>=0.7.0
 ### 4.4 VRAM Allocation Strategy
 
 ```
-Qwen3-VL-4B-Thinking (4-bit quant): ~6GB
+Qwen3-VL-4B-Thinking-FP8:           ~8GB
 Qwen3-Embedding-0.6B:               ~2GB
-vLLM overhead + KV cache:           ~6GB
+vLLM overhead + KV cache:           ~4GB
 Buffer:                             ~2GB
 ─────────────────────────────────────────
 Total:                              ~16GB ✓
@@ -215,7 +215,7 @@ Total:                              ~16GB ✓
 |------|------|---------|
 | 1.1 | Setup project structure | Tạo folder structure, virtual env |
 | 1.2 | Setup PostgreSQL | Docker compose, create tables |
-| 1.3 | Setup vLLM server | Load Qwen3-VL-4B-Thinking với AWQ quantization |
+| 1.3 | Setup vLLM server | Load Qwen3-VL-4B-Thinking-FP8 |
 | 1.4 | Setup Embedding server | Separate vLLM instance hoặc local loading |
 
 ### Phase 2: Core Components (Day 3-5)
@@ -442,7 +442,7 @@ CREATE INDEX idx_messages_conversation ON messages(conversation_id, created_at D
 ```bash
 # vLLM Configuration
 VLLM_BASE_URL=http://localhost:8000/v1
-VLLM_MODEL_NAME=Qwen/Qwen3-VL-4B-Thinking
+VLLM_MODEL_NAME=Qwen/Qwen3-VL-4B-Thinking-FP8
 
 # Embedding Configuration  
 EMBEDDING_MODEL_PATH=Qwen/Qwen3-Embedding-0.6B
@@ -466,10 +466,9 @@ API_PORT=8080
 ### 8.2 vLLM Startup Command
 
 ```bash
-# Start vLLM with Qwen3-VL-4B-Thinking (AWQ quantization for 16GB VRAM)
+# Start vLLM with Qwen3-VL-4B-Thinking-FP8
 python -m vllm.entrypoints.openai.api_server \
-    --model Qwen/Qwen3-VL-4B-Thinking \
-    --quantization awq \
+    --model Qwen/Qwen3-VL-4B-Thinking-FP8 \
     --max-model-len 8192 \
     --gpu-memory-utilization 0.85 \
     --port 8000 \
@@ -494,7 +493,7 @@ python -m vllm.entrypoints.openai.api_server \
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| VRAM overflow | High | AWQ quantization, careful batch sizing |
+| VRAM overflow | High | FP8 quantization, careful batch sizing |
 | Slow RAG retrieval | Medium | Pre-compute embeddings, optimize ChromaDB |
 | Router misclassification | Medium | Few-shot examples trong prompt, fallback logic |
 | PostgreSQL connection issues | Low | Connection pooling, retry logic |
