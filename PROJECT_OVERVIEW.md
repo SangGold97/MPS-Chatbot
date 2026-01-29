@@ -75,7 +75,7 @@ User Query → Router Agent → [Get Figure / RAG / Direct Answer] → Context A
                                           ▼
                     ┌─────────────────────────────────────────────────────────┐
                     │                generate_answer                           │
-                    │     (Qwen3-VL-4B-Thinking → Stream final answer)        │
+                    │      (Qwen3-VL-4B-Instruct → Stream final answer)       │
                     └─────────────────────┬───────────────────────────────────┘
                                           │
                                           ▼
@@ -146,8 +146,8 @@ def route_decision(state: AgentState) -> list[str]:
 |----------|------------|---------|---------|
 | **LLM Framework** | LangGraph | 0.2.x | Workflow orchestration |
 | **LLM Serving** | vLLM | 0.6.x | High-performance inference |
-| **Embedding Model** | Qwen3-Embedding-0.6B | - | Text embedding cho RAG |
-| **Reasoning Model** | Qwen3-VL-4B-Thinking-FP8 | - | Multi-modal reasoning |
+| **Embedding Model** | Qwen3-Embedding-0.6B (vLLM API) | - | Text embedding cho RAG via vLLM |
+| **Reasoning Model** | Qwen3-VL-4B-Instruct-FP8 | - | Multi-modal reasoning |
 | **Vector DB** | ChromaDB | 0.5.x | Offline vector storage |
 | **Database** | PostgreSQL | 16.x | Conversation history |
 | **Backend** | FastAPI | 0.115.x | REST API + SSE streaming |
@@ -171,7 +171,9 @@ transformers>=4.45.0
 
 # Vector DB & RAG
 chromadb>=0.5.0
-sentence-transformers>=3.0.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+httpx>=0.27.0
 
 # Database
 asyncpg>=0.30.0
@@ -197,10 +199,10 @@ loguru>=0.7.0
 ### 4.4 VRAM Allocation Strategy
 
 ```
-Qwen3-VL-4B-Thinking-FP8:           ~8GB
-Qwen3-Embedding-0.6B:               ~2GB
-vLLM overhead + KV cache:           ~4GB
-Buffer:                             ~2GB
+Qwen3-VL-4B-Instruct-FP8 (70% GPU): ~11GB
+Qwen3-Embedding-0.6B (10% GPU):     ~1.5GB
+vLLM overhead + KV cache:           ~2GB
+Buffer:                             ~1.5GB
 ─────────────────────────────────────────
 Total:                              ~16GB ✓
 ```
@@ -280,8 +282,8 @@ mps-chatbot/
 ├── data/
 │   ├── figures/                    # Local figure storage
 │   │   └── {figure_id}.png
-│   ├── documents/                  # Documents for RAG indexing
-│   └── chroma_db/                  # ChromaDB persistent storage
+│   └── documents/                  # Documents for RAG indexing
+│       └── [BCA]TERM_DATA.xlsx     # BCA terms dictionary
 │
 ├── src/
 │   ├── __init__.py
@@ -305,11 +307,14 @@ mps-chatbot/
 │   │   ├── __init__.py
 │   │   ├── connection.py           # PostgreSQL async connection
 │   │   ├── models.py               # SQLAlchemy ORM models
-│   │   └── repository.py           # CRUD operations
+│   │   ├── repository.py           # CRUD operations
+│   │   └── volumes/                # Persistent storage
+│   │       ├── chromadb/           # ChromaDB vector store
+│   │       └── postgres_data/      # PostgreSQL data
 │   │
 │   ├── rag/
 │   │   ├── __init__.py
-│   │   ├── embedder.py             # Qwen3-Embedding wrapper
+│   │   ├── embedder.py             # vLLM Embedding API client
 │   │   ├── vectorstore.py          # ChromaDB operations
 │   │   └── retriever.py            # Semantic search logic
 │   │
@@ -374,65 +379,6 @@ Current figure_id in context: {figure_id}
 """
 ```
 
-### 7.2 Streaming Response Filter
-
-```python
-async def filter_thinking_tokens(stream: AsyncIterator[str]) -> AsyncIterator[str]:
-    """Filter out <think>...</think> blocks from streaming response."""
-    buffer = ""
-    in_thinking = False
-    
-    async for chunk in stream:
-        buffer += chunk
-        
-        while buffer:
-            if in_thinking:
-                end_idx = buffer.find("</think>")
-                if end_idx != -1:
-                    buffer = buffer[end_idx + 8:]
-                    in_thinking = False
-                else:
-                    break
-            else:
-                start_idx = buffer.find("<think>")
-                if start_idx != -1:
-                    yield buffer[:start_idx]
-                    buffer = buffer[start_idx + 7:]
-                    in_thinking = True
-                else:
-                    # Yield tất cả trừ potential partial tag
-                    safe_len = len(buffer) - 7
-                    if safe_len > 0:
-                        yield buffer[:safe_len]
-                        buffer = buffer[safe_len:]
-                    break
-    
-    if buffer and not in_thinking:
-        yield buffer
-```
-
-### 7.3 Database Schema
-
-```sql
-CREATE TABLE conversations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE messages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
-    role VARCHAR(20) NOT NULL,  -- 'user' | 'assistant'
-    content TEXT NOT NULL,
-    figure_id VARCHAR(100),
-    metadata JSONB,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE INDEX idx_messages_conversation ON messages(conversation_id, created_at DESC);
-```
-
 ---
 
 ## 8. Configuration
@@ -440,20 +386,26 @@ CREATE INDEX idx_messages_conversation ON messages(conversation_id, created_at D
 ### 8.1 Environment Variables
 
 ```bash
-# vLLM Configuration
+# vLLM LLM Configuration
 VLLM_BASE_URL=http://localhost:8000/v1
-VLLM_MODEL_NAME=Qwen/Qwen3-VL-4B-Thinking-FP8
+VLLM_MODEL_NAME=Qwen/Qwen3-VL-4B-Instruct-FP8
+VLLM_PORT=8000
+VLLM_MAX_LEN=4096
+VLLM_GPU_UTIL=0.70
 
-# Embedding Configuration  
-EMBEDDING_MODEL_PATH=Qwen/Qwen3-Embedding-0.6B
-EMBEDDING_DEVICE=cuda
+# Embedding Configuration (vLLM API)
+EMBEDDING_BASE_URL=http://localhost:8001/v1
+EMBEDDING_MODEL_NAME=Qwen/Qwen3-Embedding-0.6B
+EMBEDDING_PORT=8001
+EMBEDDING_MAX_LEN=512
+EMBEDDING_GPU_UTIL=0.10
 
 # Database
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/chatbot
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/chatbot
 
 # ChromaDB
-CHROMA_PERSIST_DIR=./data/chroma_db
-CHROMA_COLLECTION_NAME=documents
+CHROMA_PERSIST_DIR=./src/database/volumes/chromadb
+CHROMA_COLLECTION_NAME=bca_terms
 
 # Figure Storage
 FIGURES_DIR=./data/figures
@@ -466,13 +418,20 @@ API_PORT=8080
 ### 8.2 vLLM Startup Command
 
 ```bash
-# Start vLLM with Qwen3-VL-4B-Thinking-FP8
+# Use start_vllm.sh to start both servers (reads from .env)
+./scripts/start_vllm.sh
+
+# Or manually start LLM server (port 8000, 70% GPU)
 python -m vllm.entrypoints.openai.api_server \
-    --model Qwen/Qwen3-VL-4B-Thinking-FP8 \
-    --max-model-len 8192 \
-    --gpu-memory-utilization 0.85 \
-    --port 8000 \
-    --trust-remote-code
+    --model Qwen/Qwen3-VL-4B-Instruct-FP8 \
+    --port 8000 --max-model-len 4096 \
+    --gpu-memory-utilization 0.70 --trust-remote-code
+
+# And Embedding server (port 8001, 10% GPU)
+python -m vllm.entrypoints.openai.api_server \
+    --model Qwen/Qwen3-Embedding-0.6B \
+    --port 8001 --max-model-len 512 \
+    --gpu-memory-utilization 0.10 --trust-remote-code
 ```
 
 ---
