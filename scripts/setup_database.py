@@ -4,32 +4,19 @@ from loguru import logger
 import asyncpg
 
 
-DATABASE_URL = "postgresql://postgres:postgres@localhost:5433/chatbot"
+DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/chatbot"
 
 CREATE_TABLES_SQL = """
 -- Create conversations table
 CREATE TABLE IF NOT EXISTS conversations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    conversation_id VARCHAR(255) NOT NULL,
+    turn INT NOT NULL,
+    query TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (conversation_id, turn)
 );
-
--- Create messages table
-CREATE TABLE IF NOT EXISTS messages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
-    role VARCHAR(20) NOT NULL,
-    content TEXT NOT NULL,
-    figure_id VARCHAR(100),
-    metadata JSONB,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Create index for faster queries
-CREATE INDEX IF NOT EXISTS idx_messages_conversation 
-ON messages(conversation_id, created_at DESC);
 """
-
 
 async def create_tables() -> bool:
     """Create database tables."""
@@ -52,27 +39,40 @@ async def create_tables() -> bool:
 
 
 async def verify_tables() -> bool:
-    """Verify tables exist."""
+    """Verify tables exist and have correct structure."""
     try:
         conn = await asyncpg.connect(DATABASE_URL)
 
-        # Check tables exist
-        tables = await conn.fetch("""
-            SELECT table_name FROM information_schema.tables 
-            WHERE table_schema = 'public'
+        # Check conversations table columns
+        columns = await conn.fetch("""
+            SELECT column_name, data_type FROM information_schema.columns 
+            WHERE table_name = 'conversations' AND table_schema = 'public'
+            ORDER BY ordinal_position
         """)
-        table_names = [t["table_name"] for t in tables]
-
-        # Verify required tables
-        required = ["conversations", "messages"]
-        missing = [t for t in required if t not in table_names]
-
-        if missing:
-            logger.error(f"Missing tables: {missing}")
+        
+        if not columns:
+            logger.error("conversations table does not exist")
             await conn.close()
             return False
 
-        logger.info(f"Tables verified: {table_names}")
+        col_dict = {c["column_name"]: c["data_type"] for c in columns}
+        
+        # Verify required columns
+        required_cols = {
+            "conversation_id": "character varying",
+            "turn": "integer",
+            "query": "text",
+            "answer": "text",
+            "created_at": "timestamp without time zone"
+        }
+        
+        missing = [c for c in required_cols if c not in col_dict]
+        if missing:
+            logger.error(f"Missing columns: {missing}")
+            await conn.close()
+            return False
+
+        logger.info(f"Table 'conversations' verified with columns: {list(col_dict.keys())}")
         await conn.close()
         return True
 
@@ -100,20 +100,28 @@ async def main():
         conn = await asyncpg.connect(DATABASE_URL)
 
         # Insert conversation
-        conv_id = await conn.fetchval("""
-            INSERT INTO conversations DEFAULT VALUES RETURNING id
-        """)
-        logger.info(f"Created conversation: {conv_id}")
+        test_conv_id = "test_conv_001"
+        test_turn = 1
+        test_query = "Test query"
+        test_answer = "Test answer"
+        
+        await conn.execute("""
+            INSERT INTO conversations (conversation_id, turn, query, answer)
+            VALUES ($1, $2, $3, $4)
+        """, test_conv_id, test_turn, test_query, test_answer)
+        logger.info(f"Created conversation: {test_conv_id}")
 
-        # Insert message
-        msg_id = await conn.fetchval("""
-            INSERT INTO messages (conversation_id, role, content) 
-            VALUES ($1, $2, $3) RETURNING id
-        """, conv_id, "user", "Test message")
-        logger.info(f"Created message: {msg_id}")
+        # Verify insertion
+        result = await conn.fetchrow("""
+            SELECT * FROM conversations WHERE conversation_id = $1 AND turn = $2
+        """, test_conv_id, test_turn)
+        assert result is not None, "Failed to retrieve inserted data"
+        logger.info(f"Verified data: {dict(result)}")
 
         # Cleanup test data
-        await conn.execute("DELETE FROM conversations WHERE id = $1", conv_id)
+        await conn.execute("""
+            DELETE FROM conversations WHERE conversation_id = $1
+        """, test_conv_id)
         logger.info("Cleaned up test data")
 
         await conn.close()

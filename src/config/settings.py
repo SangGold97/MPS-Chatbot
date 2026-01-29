@@ -8,11 +8,11 @@ class Settings(BaseSettings):
 
     # vLLM Configuration
     vllm_base_url: str = "http://localhost:8000/v1"
-    vllm_model_name: str = "Qwen/Qwen3-VL-4B-Thinking-FP8"
+    vllm_model_name: str = "Qwen/Qwen3-VL-4B-Instruct" #"Qwen/Qwen3-VL-4B-Thinking-FP8"
 
     # Embedding Configuration
-    embedding_model_path: str = "Qwen/Qwen3-Embedding-0.6B"
-    embedding_device: str = "cuda"
+    embedding_base_url: str = "http://localhost:8001/v1"
+    embedding_model_name: str = "Qwen/Qwen3-Embedding-0.6B"
 
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5433/chatbot"
