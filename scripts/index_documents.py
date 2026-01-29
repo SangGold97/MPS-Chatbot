@@ -2,12 +2,14 @@
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import chromadb
 import pandas as pd
-from chromadb.config import Settings
+from chromadb.config import Settings as ChromaSettings
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.config.settings import get_settings
 from src.rag.embedder import EmbeddingClient
 
 
@@ -45,7 +47,7 @@ def index_to_chromadb(
     chunks: list[dict],
     embedder: EmbeddingClient,
     persist_dir: str,
-    collection_name: str = "bca_terms",
+    collection_name: str | None = None,
 ) -> chromadb.Collection:
     """Index chunks into ChromaDB with FLAT index.
 
@@ -58,6 +60,10 @@ def index_to_chromadb(
     Returns:
         ChromaDB collection
     """
+    # Get collection name from settings if not provided
+    settings = get_settings()
+    collection_name = collection_name or settings.chroma_collection_name
+
     # Extract data and generate embeddings first
     ids = [c["id"] for c in chunks]
     contents = [c["content"] for c in chunks]
@@ -68,7 +74,7 @@ def index_to_chromadb(
     # Initialize ChromaDB with FLAT index (exact search)
     client = chromadb.PersistentClient(
         path=persist_dir,
-        settings=Settings(anonymized_telemetry=False),
+        settings=ChromaSettings(anonymized_telemetry=False),
     )
 
     # Delete existing collection if exists
@@ -97,12 +103,15 @@ def index_to_chromadb(
 
 def main():
     """Index xlsx documents into ChromaDB."""
-    # Paths - use absolute paths
+    # Load settings
+    settings = get_settings()
     base_dir = Path(__file__).resolve().parent.parent
-    xlsx_path = base_dir / "data/documents/[BCA]TERM_DATA.xlsx"
-    persist_dir = str(base_dir / "src/database/volumes/chromadb")
 
-    # Initialize embedding client
+    # Paths from settings
+    xlsx_path = base_dir / "data/documents/[BCA]TERM_DATA.xlsx"
+    persist_dir = str(base_dir / settings.chroma_persist_dir.lstrip("./"))
+
+    # Initialize embedding client (auto loads from settings)
     embedder = EmbeddingClient()
     logger.info(f"Embedding dimension: {embedder.get_embedding_dim()}")
 

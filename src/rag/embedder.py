@@ -3,18 +3,17 @@ import httpx
 import numpy as np
 from loguru import logger
 
+from src.config.settings import get_settings
+
 
 class EmbeddingClient:
     """Client for vLLM embedding API."""
 
-    def __init__(
-        self,
-        base_url: str = "http://localhost:8001/v1",
-        model: str = "Qwen/Qwen3-Embedding-0.6B",
-    ):
-        """Initialize embedding client."""
-        self.base_url = base_url
-        self.model = model
+    def __init__(self, base_url: str | None = None, model: str | None = None):
+        """Initialize embedding client from settings."""
+        settings = get_settings()
+        self.base_url = base_url or settings.embedding_base_url
+        self.model = model or settings.embedding_model_name
         self.client = httpx.Client(timeout=60.0)
 
     def encode(self, texts: str | list[str]) -> np.ndarray:
@@ -47,14 +46,11 @@ class EmbeddingClient:
 _client: EmbeddingClient | None = None
 
 
-def get_embedding_client(
-    base_url: str = "http://localhost:8001/v1",
-    model: str = "Qwen/Qwen3-Embedding-0.6B",
-) -> EmbeddingClient:
+def get_embedding_client() -> EmbeddingClient:
     """Get or create embedding client singleton."""
     global _client
     if _client is None:
-        _client = EmbeddingClient(base_url, model)
+        _client = EmbeddingClient()
     return _client
 
 

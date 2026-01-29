@@ -3,17 +3,25 @@
 
 set -e
 
-# LLM Configuration
-LLM_MODEL="Qwen/Qwen3-VL-4B-Instruct-FP8" #"Qwen/Qwen3-VL-4B-Thinking-FP8"
-LLM_PORT=8000
-LLM_MAX_LEN=4096
-LLM_GPU_UTIL=0.70
+# Load environment variables from .env
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/../.env"
 
-# Embedding Configuration
-EMB_MODEL="Qwen/Qwen3-Embedding-0.6B"
-EMB_PORT=8001
-EMB_MAX_LEN=512
-EMB_GPU_UTIL=0.10
+if [ -f "$ENV_FILE" ]; then
+    export $(grep -v '^#' "$ENV_FILE" | xargs)
+fi
+
+# LLM Configuration (from .env or defaults)
+LLM_MODEL="${VLLM_MODEL_NAME:-Qwen/Qwen3-VL-4B-Instruct-FP8}"
+LLM_PORT="${VLLM_PORT:-8000}"
+LLM_MAX_LEN="${VLLM_MAX_LEN:-4096}"
+LLM_GPU_UTIL="${VLLM_GPU_UTIL:-0.70}"
+
+# Embedding Configuration (from .env or defaults)
+EMB_MODEL="${EMBEDDING_MODEL_NAME:-Qwen/Qwen3-Embedding-0.6B}"
+EMB_PORT="${EMBEDDING_PORT:-8001}"
+EMB_MAX_LEN="${EMBEDDING_MAX_LEN:-512}"
+EMB_GPU_UTIL="${EMBEDDING_GPU_UTIL:-0.10}"
 
 # Cleanup function
 cleanup() {

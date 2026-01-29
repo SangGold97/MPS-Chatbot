@@ -2,25 +2,28 @@
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import chromadb
 from chromadb.config import Settings
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.config.settings import get_settings
 from src.rag.embedder import EmbeddingClient
 
 
 def test_indexing():
     """Test that documents are indexed correctly in ChromaDB."""
-    persist_dir = str(Path(__file__).parent.parent / "src/database/volumes/chromadb")
-    collection_name = "bca_terms"
+    settings = get_settings()
+    base_dir = Path(__file__).resolve().parent.parent
+    persist_dir = str(base_dir / settings.chroma_persist_dir.lstrip("./"))
 
     # Load ChromaDB
     client = chromadb.PersistentClient(
         path=persist_dir,
         settings=Settings(anonymized_telemetry=False),
     )
-    collection = client.get_collection(collection_name)
+    collection = client.get_collection(settings.chroma_collection_name)
 
     # Check document count
     count = collection.count()

@@ -1,14 +1,20 @@
-"""Test script for Qwen3-VL-4B-Instruct-FP8 LLM with streaming output."""
+"""Test script for LLM with streaming output."""
 import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import httpx
 from loguru import logger
 
+from src.config.settings import get_settings
+
 
 def stream_chat(
     prompt: str,
-    base_url: str = "http://localhost:8000/v1",
-    model: str = "Qwen/Qwen3-VL-4B-Instruct-FP8",
+    base_url: str | None = None,
+    model: str | None = None,
     max_tokens: int = 1024,
 ) -> str:
     """Stream chat completion from vLLM API.
@@ -22,6 +28,11 @@ def stream_chat(
     Returns:
         Full response text.
     """
+    # Load from settings if not provided
+    settings = get_settings()
+    base_url = base_url or settings.vllm_base_url
+    model = model or settings.vllm_model_name
+
     # Build request payload
     payload = {
         "model": model,
@@ -68,9 +79,10 @@ def stream_chat(
 
 def main() -> None:
     """Run LLM streaming tests."""
+    settings = get_settings()
     logger.info("Starting LLM streaming test...")
-    logger.info("Model: Qwen/Qwen3-VL-4B-Instruct-FP8")
-    logger.info("API: http://localhost:8000/v1")
+    logger.info(f"Model: {settings.vllm_model_name}")
+    logger.info(f"API: {settings.vllm_base_url}")
     print("-" * 50)
 
     # Test prompt
