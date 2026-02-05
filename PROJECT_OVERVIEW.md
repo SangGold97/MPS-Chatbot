@@ -29,7 +29,7 @@ User Query → Router Agent → [Get Figure / RAG / Direct Answer] → Context A
 |-----------|----------------|
 | **Router Agent** | Phân tích query, quyết định cần tool nào |
 | **Figure Tool (MCP)** | Lấy image base64 theo figure_id |
-| **RAG System** | Semantic search trong ChromaDB |
+| **Semantic Search Tool (MCP)** | Semantic search trong ChromaDB, trả về context chunks |
 | **Answer Generator** | Tổng hợp context và sinh câu trả lời |
 | **Memory Manager** | Quản lý conversation history (PostgreSQL) |
 
@@ -60,8 +60,8 @@ User Query → Router Agent → [Get Figure / RAG / Direct Answer] → Context A
                           │               │               │
                           ▼               ▼               ▼
               ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-              │  get_figure   │  │   rag_search  │  │ direct_answer │
-              │  (MCP Tool)   │  │  (ChromaDB)   │  │   (Skip)      │
+              │  get_figure   │  │semantic_search│  │ direct_answer │
+              │  (MCP Tool)   │  │  (MCP Tool)   │  │   (Skip)      │
               └───────┬───────┘  └───────┬───────┘  └───────┬───────┘
                       │                   │                   │
                       └───────────────────┼───────────────────┘
@@ -97,7 +97,7 @@ User Query → Router Agent → [Get Figure / RAG / Direct Answer] → Context A
 | `load_conversation_history` | Function | Query PostgreSQL lấy 5 turns gần nhất theo `conversation_id` |
 | `router_agent` | LLM Call | Gọi Qwen3-VL với structured output để quyết định actions cần thực hiện |
 | `get_figure` | Tool (MCP) | Đọc figure từ local path, convert sang base64 bằng PIL |
-| `rag_search` | Function | Embed query bằng Qwen3-Embedding, search ChromaDB top-k |
+| `semantic_search` | Tool (MCP) | Embed query bằng Qwen3-Embedding, search ChromaDB top-k |
 | `aggregate_context` | Function | Merge tất cả context (figure, RAG, history) thành prompt |
 | `generate_answer` | LLM Call | Gọi Qwen3-VL streaming, filter bỏ `<think>` tags |
 | `save_to_memory` | Function | Insert conversation turn vào PostgreSQL |
@@ -108,7 +108,7 @@ User Query → Router Agent → [Get Figure / RAG / Direct Answer] → Context A
 {
   "actions": [
     {"type": "get_figure", "figure_id": "fig_001"},
-    {"type": "rag", "query": "explanation of concept X"}
+    {"type": "semantic_search", "query": "explanation of concept X"}
   ],
   "ready_to_answer": false
 }
@@ -127,8 +127,8 @@ def route_decision(state: AgentState) -> list[str]:
     for action in actions:
         if action["type"] == "get_figure":
             next_nodes.append("get_figure")
-        elif action["type"] == "rag":
-            next_nodes.append("rag_search")
+        elif action["type"] == "semantic_search":
+            next_nodes.append("semantic_search")
     
     if not next_nodes or state["router_output"]["ready_to_answer"]:
         next_nodes = ["aggregate_context"]
@@ -299,9 +299,10 @@ mps-chatbot/
 │   │
 │   ├── tools/
 │   │   ├── __init__.py
-│   │   ├── mcp_server.py           # MCP tool server implementation
+│   │   ├── mcp_protocol.py         # MCP base classes and protocols
 │   │   ├── figure_tool.py          # Get figure by ID → base64
-│   │   └── rag_tool.py             # RAG search implementation
+│   │   ├── semantic_search_tool.py # Semantic search in vector DB
+│   │   └── tool_registry.py        # Centralized tool management
 │   │
 │   ├── database/
 │   │   ├── __init__.py
@@ -361,7 +362,7 @@ ROUTER_SYSTEM_PROMPT = """You are a routing agent that analyzes user queries abo
 
 Given a query and conversation history, decide what actions are needed:
 1. "get_figure" - When query asks about visual content of a specific figure
-2. "rag" - When query needs additional context/explanation from knowledge base
+2. "semantic_search" - When query needs additional context/explanation from knowledge base
 3. Both - When query needs figure AND additional context
 4. None - When you can answer directly from conversation history
 
@@ -370,7 +371,7 @@ Output JSON format:
   "reasoning": "brief explanation of your decision",
   "actions": [
     {"type": "get_figure", "figure_id": "xxx"},
-    {"type": "rag", "query": "reformulated search query"}
+    {"type": "semantic_search", "query": "reformulated search query"}
   ],
   "ready_to_answer": true/false
 }

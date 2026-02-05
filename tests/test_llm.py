@@ -87,14 +87,14 @@ def main() -> None:
     print("-" * 50)
 
     # Test with image: venn1.png
-    image_path = Path(__file__).parent.parent / "data" / "figures" / "scatter2.png"
+    image_path = Path(__file__).parent.parent / "data" / "figures" / "scatter1.png"
     
     # Encode image to base64
     with open(image_path, "rb") as f:
         image_data = base64.b64encode(f.read()).decode("utf-8")
     
     # Prompt for image description
-    prompt = "Scatter màu tím là gì."
+    prompt = "Mô tả ngắn gọn figure này"
     logger.info(f"Image: {image_path.name}")
     logger.info(f"Prompt: {prompt}")
     print("-" * 50)

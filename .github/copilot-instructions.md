@@ -14,6 +14,7 @@
 - Write docstrings (Google style) for all public functions and classes, be short and concise
 - Use try-except blocks for risky operations
 - When use terminal command, use `conda activate mps` to activate the conda environment
+- Do not use pytest
 - Follow PROJECT_OVERVIEW.md for project-specific guidelines
 
 ## Code Generation Rules
