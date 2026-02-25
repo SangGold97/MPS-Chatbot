@@ -15,7 +15,7 @@
 - Use try-except blocks for risky operations
 - When use terminal command, use `conda activate mps` to activate the conda environment
 - Do not use pytest
-- Follow PROJECT_OVERVIEW.md for project-specific guidelines
+- Follow PROJECT_OVERVIEW.md for project-specific guidelines, update PROJECT_OVERVIEW.md if necessary for compatibility with new codebase changes
 
 ## Code Generation Rules
 - Add logging by using loguru library, not `print()` statements

@@ -13,7 +13,7 @@ Chatbot thông minh có khả năng trả lời câu hỏi về nội dung của
 - Multi-modal reasoning (text + image)
 - Dynamic tool orchestration (conditional routing)
 - Efficient context management với limited VRAM (16GB)
-- Streaming response while hiding internal reasoning
+- Streaming response while maintaining good UX
 
 ---
 
@@ -95,11 +95,11 @@ User Query → Router Agent → [Get Figure / RAG / Direct Answer] → Context A
 | Node | Type | Description |
 |------|------|-------------|
 | `load_conversation_history` | Function | Query PostgreSQL lấy 5 turns gần nhất theo `conversation_id` |
-| `router_agent` | LLM Call | Gọi Qwen3-VL với structured output để quyết định actions cần thực hiện |
+| `router_agent` | LLM Call | Gọi Qwen3-VL với LangChain `with_structured_output()` để quyết định actions |
 | `get_figure` | Tool (MCP) | Đọc figure từ local path, convert sang base64 bằng PIL |
 | `semantic_search` | Tool (MCP) | Embed query bằng Qwen3-Embedding, search ChromaDB top-k |
 | `aggregate_context` | Function | Merge tất cả context (figure, RAG, history) thành prompt |
-| `generate_answer` | LLM Call | Gọi Qwen3-VL streaming, filter bỏ `<think>` tags |
+| `generate_answer` | LLM Call | Gọi Qwen3-VL để sinh câu trả lời (non-streaming trong graph node; `test_workflow.py` gọi `stream_generate()` trực tiếp để demo) |
 | `save_to_memory` | Function | Insert conversation turn vào PostgreSQL |
 
 ### 3.3 Router Agent Output Schema
@@ -159,6 +159,7 @@ def route_decision(state: AgentState) -> list[str]:
 ```
 # Core
 langchain>=0.3.0
+langchain-openai>=0.3.0
 langgraph>=0.2.0
 fastapi>=0.115.0
 uvicorn>=0.32.0
@@ -168,24 +169,34 @@ streamlit>=1.40.0
 vllm>=0.6.0
 openai>=1.50.0  # vLLM OpenAI-compatible client
 transformers>=4.45.0
+torch>=2.4.0
 
 # Vector DB & RAG
 chromadb>=0.5.0
-pandas>=2.0.0
-openpyxl>=3.1.0
+sentence-transformers>=3.0.0
 httpx>=0.27.0
 
 # Database
 asyncpg>=0.30.0
-sqlalchemy>=2.0.0
+sqlalchemy[asyncio]>=2.0.0
+psycopg2-binary>=2.9.0
 
 # Utilities
 pillow>=10.0.0
 pydantic>=2.0.0
+pydantic-settings>=2.0.0
 python-multipart>=0.0.9
 sse-starlette>=2.0.0
-httpx>=0.27.0
 loguru>=0.7.0
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+
+# Indexing only (not in main requirements)
+# pandas>=2.0.0
+# openpyxl>=3.1.0
 ```
 
 ### 4.3 Hardware Requirements
@@ -217,7 +228,7 @@ Total:                              ~16GB ✓
 |------|------|---------|
 | 1.1 | Setup project structure | Tạo folder structure, virtual env |
 | 1.2 | Setup PostgreSQL | Docker compose, create tables |
-| 1.3 | Setup vLLM server | Load Qwen3-VL-4B-Thinking-FP8 |
+| 1.3 | Setup vLLM server | Load Qwen3-VL-4B-Instruct-FP8 |
 | 1.4 | Setup Embedding server | Separate vLLM instance hoặc local loading |
 
 ### Phase 2: Core Components (Day 3-5)
@@ -225,9 +236,9 @@ Total:                              ~16GB ✓
 | Step | Task | Details |
 |------|------|---------|
 | 2.1 | Implement MCP Figure Tool | PIL read → base64, tool schema |
-| 2.2 | Build RAG pipeline | ChromaDB setup, indexing script, search function |
-| 2.3 | Implement Memory Manager | PostgreSQL CRUD cho conversations |
-| 2.4 | Build Router Agent | Prompt engineering, structured output parsing |
+| 2.2 | Build RAG pipeline | ChromaDB setup, indexing script, SemanticSearchTool |
+| 2.3 | Implement Memory Manager | PostgreSQL async CRUD (asyncpg) |
+| 2.4 | Build Router Agent | LangChain structured output, OpenAI SDK client |
 
 ### Phase 3: LangGraph Workflow (Day 6-7)
 
@@ -243,7 +254,7 @@ Total:                              ~16GB ✓
 | Step | Task | Details |
 |------|------|---------|
 | 4.1 | FastAPI endpoints | `/chat` SSE endpoint, `/conversations` CRUD |
-| 4.2 | Streaming handler | Filter thinking tokens, yield answer only |
+| 4.2 | Streaming handler | SSE stream tokens to client |
 | 4.3 | Error handling | Graceful degradation, retries |
 
 ### Phase 5: UI & Integration (Day 10-11)
@@ -268,20 +279,19 @@ Total:                              ~16GB ✓
 
 ```
 mps-chatbot/
-├── docker-compose.yml              # PostgreSQL, vLLM services
-├── pyproject.toml                  # Dependencies
-├── .env.example                    # Environment variables template
+├── docker-compose.yml              # PostgreSQL service
+├── requirements.txt                # Python dependencies
+├── .env                            # Environment variables (copy from template)
 ├── README.md
 ├── PROJECT_OVERVIEW.md
 │
 ├── scripts/
-│   ├── index_documents.py          # Indexing documents vào ChromaDB
-│   ├── setup_database.py           # Create PostgreSQL tables
-│   └── start_vllm.sh               # vLLM server startup script
+│   ├── index_documents.py          # Index XLSX documents vào ChromaDB
+│   └── start_vllm.sh               # Start cả 2 vLLM servers (LLM + Embedding)
 │
 ├── data/
 │   ├── figures/                    # Local figure storage
-│   │   └── {figure_id}.png
+│   │   └── {figure_id}.png/jpg
 │   └── documents/                  # Documents for RAG indexing
 │       └── [BCA]TERM_DATA.xlsx     # BCA terms dictionary
 │
@@ -290,65 +300,57 @@ mps-chatbot/
 │   │
 │   ├── config/
 │   │   ├── __init__.py
-│   │   └── settings.py             # Pydantic settings management
+│   │   └── settings.py             # Pydantic settings loaded from .env
 │   │
 │   ├── models/
 │   │   ├── __init__.py
-│   │   ├── schemas.py              # Pydantic models (request/response)
-│   │   └── state.py                # LangGraph AgentState definition
+│   │   ├── schemas.py              # Pydantic models: RouterOutput, ChatRequest, etc.
+│   │   └── state.py                # LangGraph AgentState TypedDict
 │   │
 │   ├── tools/
 │   │   ├── __init__.py
-│   │   ├── mcp_protocol.py         # MCP base classes and protocols
-│   │   ├── figure_tool.py          # Get figure by ID → base64
-│   │   ├── semantic_search_tool.py # Semantic search in vector DB
-│   │   └── tool_registry.py        # Centralized tool management
+│   │   ├── mcp_protocol.py         # MCPTool ABC, MCPToolOutput base classes
+│   │   ├── figure_tool.py          # FigureTool: read image → base64 (PIL)
+│   │   ├── semantic_search_tool.py # SemanticSearchTool: embed → ChromaDB query
+│   │   └── tool_registry.py        # ToolRegistry singleton (get_figure, semantic_search)
 │   │
 │   ├── database/
 │   │   ├── __init__.py
-│   │   ├── connection.py           # PostgreSQL async connection
-│   │   ├── models.py               # SQLAlchemy ORM models
-│   │   ├── repository.py           # CRUD operations
-│   │   └── volumes/                # Persistent storage
-│   │       ├── chromadb/           # ChromaDB vector store
-│   │       └── postgres_data/      # PostgreSQL data
+│   │   ├── postgres_manager.py     # Async PostgreSQL CRUD via asyncpg
+│   │   └── volumes/                # Persistent storage (Docker mounts)
+│   │       ├── chromadb/           # ChromaDB vector store files
+│   │       └── postgres_data/      # PostgreSQL data directory
 │   │
 │   ├── rag/
 │   │   ├── __init__.py
-│   │   ├── embedder.py             # vLLM Embedding API client
-│   │   ├── vectorstore.py          # ChromaDB operations
-│   │   └── retriever.py            # Semantic search logic
+│   │   └── embedder.py             # EmbeddingClient: call vLLM /embeddings API
 │   │
 │   ├── llm/
 │   │   ├── __init__.py
-│   │   ├── client.py               # vLLM OpenAI-compatible client
-│   │   ├── router.py               # Router agent logic
-│   │   └── generator.py            # Answer generation với streaming
+│   │   ├── client.py               # LLMClient: async OpenAI-compat vLLM wrapper
+│   │   ├── router.py               # RouterAgent: structured output via LangChain
+│   │   └── generator.py            # AnswerGenerator: generate() + stream_generate()
 │   │
 │   ├── workflow/
 │   │   ├── __init__.py
-│   │   ├── graph.py                # LangGraph workflow definition
-│   │   ├── nodes.py                # All node implementations
-│   │   └── edges.py                # Conditional edge functions
+│   │   ├── graph.py                # LangGraph StateGraph definition + compiled singleton
+│   │   ├── nodes.py                # All async node functions
+│   │   └── edges.py                # route_decision() conditional edge function
 │   │
-│   └── api/
+│   └── api/                        # [Planned] FastAPI REST + SSE endpoints
 │       ├── __init__.py
-│       ├── main.py                 # FastAPI app entry point
-│       ├── routes/
-│       │   ├── __init__.py
-│       │   ├── chat.py             # /chat SSE endpoint
-│       │   └── conversations.py    # Conversation CRUD
-│       └── middleware.py           # Error handling, logging
+│       └── routes/
+│           └── __init__.py
 │
-├── ui/
-│   └── app.py                      # Streamlit chat application
+├── ui/                             # [Planned] Streamlit chat UI
 │
 └── tests/
     ├── __init__.py
-    ├── test_tools.py
-    ├── test_rag.py
-    ├── test_workflow.py
-    └── test_api.py
+    ├── test_indexing.py            # ChromaDB indexing tests
+    ├── test_llm.py                 # LLM client tests
+    ├── test_postgres.py            # PostgreSQL manager tests
+    ├── test_tools.py               # MCP tool tests
+    └── test_workflow.py            # Full integration test (terminal demo)
 ```
 
 ---
